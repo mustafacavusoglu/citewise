@@ -1,0 +1,8 @@
+.env
+.venv/
+__pycache__/
+.ruff_cache/
+app.db
+app.db-*
+qdrant_data/
+.DS_Store

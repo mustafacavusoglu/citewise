@@ -1,0 +1,23 @@
+[project]
+name = "citewise"
+version = "0.1.0"
+description = "Agentic RAG template with verified citations: LangGraph, Qdrant, LiteLLM, mem0, FastAPI"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "msgspec",
+    "langgraph",
+    "langchain-openai",
+    "qdrant-client",
+    "mem0ai",
+    "langgraph-checkpoint-sqlite>=3.1.2",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+extend-select = ["I", "UP", "B"]

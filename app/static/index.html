@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Knowledge Assistant</title>
+<link rel="stylesheet" href="/static/common.css">
+<script src="/static/common.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/4.3.0/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+<style>
+  [hidden] { display: none !important; }
+
+  /* Login screen */
+  #login { flex: 1; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  #loginForm { display: block; width: min(360px, 100%); max-width: none; margin: 0; padding: 24px; border: 1px solid var(--border); border-radius: 16px; background: var(--bg); }
+  #loginForm h2 { margin: 0 0 16px; font-size: 22px; font-weight: 600; }
+  #name { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; outline: none; background: var(--bg); }
+  #name:focus { border-color: var(--muted); }
+  #loginBtn { width: 100%; margin-top: 12px; padding: 10px; background: var(--accent); color: var(--accent-fg); }
+  #loginErr { min-height: 1.4em; margin: 8px 0 0; color: var(--error); font-size: 13px; }
+  .hint { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+
+  /* App: sidebar + chat */
+  #app { flex: 1; min-height: 0; display: flex; }
+  #chat { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+  #sidebar { flex: none; width: 260px; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: var(--surface); }
+  #newchat { margin: 10px; text-align: left; }
+  #list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 8px; }
+  .conv { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border: none; border-radius: 8px; background: none; text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; }
+  .conv-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .conv-spin { flex: none; width: 12px; height: 12px; border: 2px solid var(--muted); border-top-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+  .conv-unread { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--link); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .conv-spin { animation-duration: 3s; } }
+  .conv:hover, .conv[aria-current="true"] { background: var(--border); }
+  .conv[aria-current="true"] { font-weight: 600; }
+  .list-note { padding: 8px 10px; color: var(--muted); font-size: 13px; }
+  .side-foot { display: flex; align-items: center; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }
+  .avatar { flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--accent-fg); font-size: 13px; font-weight: 600; line-height: 28px; text-align: center; }
+  #who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #menu { display: none; }
+  #backdrop { display: none; }
+
+  #messages { max-width: 768px; margin: 0 auto; padding: 24px 16px; }
+  .msg { margin-bottom: 28px; }
+  .user { display: flex; justify-content: flex-end; }
+  .user .bubble { max-width: 80%; overflow-wrap: anywhere; padding: 10px 16px; border-radius: 18px; background: var(--surface); white-space: pre-wrap; }
+  .assistant .bubble { overflow-x: auto; }
+  .assistant h2, .assistant h3 { margin: 20px 0 8px; line-height: 1.3; }
+  .assistant h2 { font-size: 19px; }
+  .assistant h3 { font-size: 16px; }
+  .assistant table { border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+  .assistant th, .assistant td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
+  .assistant blockquote { margin: 8px 0; padding-left: 12px; border-left: 3px solid var(--border); color: var(--muted); }
+  .assistant hr { border: none; border-top: 1px solid var(--border); }
+  .thinking { color: var(--muted); }
+  .error { color: var(--error); }
+
+  /* Citation markers: [1] becomes a superscript link */
+  sup.cite a, sup.cite span {
+    display: inline-block; min-width: 18px; margin: 0 1px; padding: 0 5px; border-radius: 9px;
+    background: var(--surface); color: var(--fg); font-size: 11px; line-height: 18px; text-align: center; text-decoration: none;
+  }
+  sup.cite a:hover { background: var(--border); }
+  sup.cite.bad span { background: var(--warn-bg); color: var(--warn-fg); }
+
+  .warn { margin-top: 12px; padding: 8px 12px; border-radius: 10px; background: var(--warn-bg); color: var(--warn-fg); font-size: 13px; }
+  .sources { margin-top: 16px; }
+  .sources-title { margin-bottom: 8px; color: var(--muted); font-size: 13px; font-weight: 600; }
+  .source-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+  .source {
+    display: flex; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px;
+    color: inherit; text-decoration: none; font-size: 13px; line-height: 1.45;
+  }
+  .source:hover { background: var(--surface); }
+  .source .num {
+    flex: none; width: 20px; height: 20px; border-radius: 50%; background: var(--surface);
+    font-size: 11px; line-height: 20px; text-align: center;
+  }
+  .source-name { font-weight: 600; }
+  .source-title { margin: 2px 0 0; }
+  .source-meta { margin: 2px 0 4px; color: var(--muted); }
+  .source-snippet { color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+  #empty { padding-top: 10vh; text-align: center; }
+  #empty h2 { margin-bottom: 24px; font-size: 26px; font-weight: 600; }
+  .examples { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .examples button {
+    padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: none;
+    color: var(--muted); text-align: left; cursor: pointer;
+  }
+  .examples button:hover { background: var(--surface); color: var(--fg); }
+
+  footer { padding: 0 16px 12px; }
+  form {
+    display: flex; align-items: flex-end; gap: 8px; max-width: 768px; margin: 0 auto;
+    padding: 8px 8px 8px 18px; border: 1px solid transparent; border-radius: 26px; background: var(--surface);
+  }
+  form:focus-within { border-color: var(--muted); }
+  textarea { flex: 1; max-height: 200px; padding: 6px 0; border: none; outline: none; background: none; resize: none; }
+  #send {
+    flex: none; width: 36px; height: 36px; border: none; border-radius: 50%;
+    background: var(--accent); color: var(--accent-fg); font-size: 18px; cursor: pointer;
+  }
+  #send:disabled { opacity: 0.3; cursor: default; }
+  .note { margin: 8px 0 0; color: var(--muted); font-size: 12px; text-align: center; }
+
+  @media (max-width: 600px) {
+    .examples { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 767px) {
+    #menu { display: inline-block; }
+    #sidebar { position: fixed; z-index: 20; top: 0; bottom: 0; left: 0; width: 280px; max-width: 85vw; visibility: hidden; transform: translateX(-100%); transition: transform .2s, visibility .2s; }
+    body.drawer #sidebar { visibility: visible; transform: none; }
+    body.drawer #backdrop { display: block; position: fixed; z-index: 10; inset: 0; background: rgba(0, 0, 0, .4); }
+  }
+</style>
+</head>
+<body>
+<header>
+  <button class="btn" id="menu" type="button" aria-label="Open conversations" aria-expanded="false" hidden>☰</button>
+  <h1>Knowledge Assistant</h1>
+  <button class="btn" id="theme" type="button" aria-label="Toggle light/dark theme">◐</button>
+</header>
+
+<div id="login" hidden>
+  <form id="loginForm">
+    <h2>Sign in</h2>
+    <input id="name" placeholder="Username" aria-label="Username" autocomplete="username" autocapitalize="none">
+    <p id="loginErr" role="alert"></p>
+    <button class="btn" id="loginBtn" type="submit">Sign in</button>
+    <p class="hint">No password — your name only keeps your chats separate.</p>
+  </form>
+</div>
+
+<div id="app" hidden>
+  <nav id="sidebar" aria-label="Conversations">
+    <button class="btn" id="newchat" type="button">+ New chat</button>
+    <div id="list"></div>
+    <div class="side-foot">
+      <span class="avatar" id="avatar" aria-hidden="true"></span>
+      <span id="who"></span>
+      <button class="btn" id="logout" type="button">Sign out</button>
+    </div>
+  </nav>
+  <div id="backdrop"></div>
+
+  <div id="chat">
+    <main id="scroll">
+      <div id="messages">
+        <div id="empty">
+          <h2>Ask anything about your documents</h2>
+          <div class="examples">
+            <button type="button">How many vacation days do new employees get?</button>
+            <button type="button">Can I work remotely from another country?</button>
+            <button type="button">What is the hotel limit for business travel?</button>
+            <button type="button">What should I do if my laptop is lost or stolen?</button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer>
+      <form id="form">
+        <textarea id="input" rows="1" placeholder="Ask a question…" aria-label="Message"></textarea>
+        <button id="send" type="submit" aria-label="Send" disabled>↑</button>
+      </form>
+      <p class="note">Answers are based only on the indexed documents.</p>
+    </footer>
+  </div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const emptyState = $("messages").innerHTML;
+  let user = store.get("user") || "";
+  let threadId = null;
+  let convs = null; // null = failed to load, [] = empty
+  // Per-conversation state: nothing blocks, other conversations stay usable while one waits
+  const pending = new Map(); // threadId -> request start (ms); only requests sent from this tab
+  const unread = new Set(); // conversations answered in the background and not opened yet
+  let placeholder = null; // the "searching" bubble in the open conversation
+  let tickTimer = null; // the placeholder's single timer
+  const isPending = (id) => pending.has(id) || (id === threadId && !!placeholder);
+
+  const userUrl = () => `/users/${encodeURIComponent(user)}/conversations`;
+
+  // The open conversation lives in the URL (/?c=<id>): reloading or returning from a source page reopens it
+  function setThread(id) {
+    threadId = id;
+    history.replaceState(null, "", id ? `/?c=${encodeURIComponent(id)}` : "/");
+  }
+  // Scroll position: saved when leaving the page (source link, tab close) and restored on return
+  function saveScroll() {
+    if (threadId) store.set("scroll", JSON.stringify({ id: threadId, top: $("scroll").scrollTop }));
+  }
+  $("messages").addEventListener("click", (e) => { if (e.target.closest("a")) saveScroll(); });
+  addEventListener("pagehide", saveScroll);
+  function savedScroll(id) {
+    try { const saved = JSON.parse(store.get("scroll")); return saved?.id === id ? saved.top : null; } catch { return null; }
+  }
+
+  // ---- Sign in / out ----
+  function showView() {
+    $("login").hidden = !!user;
+    $("app").hidden = !user;
+    $("menu").hidden = !user;
+    setDrawer(false);
+    if (!user) return $("name").focus();
+    $("who").textContent = user;
+    $("avatar").textContent = Array.from(user)[0].toLocaleUpperCase();
+    loadList();
+    const fromUrl = new URLSearchParams(location.search).get("c");
+    if (fromUrl) openConversation(fromUrl, { restoreScroll: true });
+  }
+  $("loginForm").onsubmit = (e) => {
+    e.preventDefault();
+    const name = $("name").value.trim().toLowerCase();
+    if (!name || name.length > 64) {
+      $("loginErr").textContent = "Username must be 1–64 characters.";
+      return;
+    }
+    $("loginErr").textContent = "";
+    $("name").value = "";
+    user = name;
+    store.set("user", user);
+    showView();
+    $("input").focus();
+  };
+  $("logout").onclick = () => {
+    user = "";
+    store.set("user", "");
+    convs = [];
+    pending.clear();
+    unread.clear();
+    newChat();
+    showView();
+  };
+
+  // ---- Sidebar ----
+  function setDrawer(open) {
+    document.body.classList.toggle("drawer", open);
+    $("menu").setAttribute("aria-expanded", String(open));
+  }
+  $("menu").onclick = () => setDrawer(true);
+  $("backdrop").onclick = () => setDrawer(false);
+  addEventListener("keydown", (e) => { if (e.key === "Escape") setDrawer(false); });
+
+  function renderList() {
+    const list = $("list");
+    list.replaceChildren();
+    if (convs === null) return list.append(el("div", "list-note", "Could not load conversations"));
+    if (!convs.length) return list.append(el("div", "list-note", "No conversations yet"));
+    for (const c of convs) {
+      const b = list.appendChild(el("button", "conv"));
+      b.type = "button";
+      b.append(el("span", "conv-title", c.title || "New chat"));
+      b.title = c.title || "New chat";
+      if (pending.has(c.id) || c.pending) b.append(Object.assign(el("span", "conv-spin"), { role: "img", ariaLabel: "Answer in progress" }));
+      else if (unread.has(c.id)) b.append(Object.assign(el("span", "conv-unread"), { role: "img", ariaLabel: "New answer" }));
+      if (c.id === threadId) b.setAttribute("aria-current", "true");
+      b.onclick = () => openConversation(c.id);
+    }
+  }
+  async function loadList() {
+    const asker = user;
+    try {
+      const res = await fetch(userUrl());
+      if (!res.ok) throw new Error(res.status);
+      const data = await res.json();
+      if (user !== asker) return;
+      // keep local pending conversations the server does not list yet
+      const local = (convs || []).filter((c) => pending.has(c.id) && !data.some((d) => d.id === c.id));
+      convs = [...local, ...data];
+    } catch {
+      if (user !== asker) return;
+      convs = null;
+    }
+    renderList();
+  }
+  async function openConversation(id, { restoreScroll = false } = {}) {
+    setDrawer(false);
+    setThread(id);
+    unread.delete(id);
+    clearThinking();
+    $("messages").replaceChildren();
+    renderList();
+    updateSend();
+    try {
+      const res = await fetch(`${userUrl()}/${encodeURIComponent(id)}`);
+      if (!res.ok) throw new Error(res.status);
+      const msgs = await res.json();
+      if (threadId !== id) return; // another conversation was opened meanwhile
+      for (const m of msgs) {
+        if (m.role === "user") addMessage("user").textContent = m.content;
+        else renderAnswer(addMessage("assistant"), m);
+      }
+      if (pending.has(id) || convs?.find((c) => c.id === id)?.pending) showThinking(id);
+      $("scroll").scrollTop = (restoreScroll ? savedScroll(id) : null) ?? $("scroll").scrollHeight;
+    } catch {
+      if (threadId !== id) return;
+      $("messages").replaceChildren(el("div", "msg error", "Could not load conversation"));
+      setThread(null);
+    }
+    updateSend();
+    renderList();
+  }
+  function newChat() {
+    clearThinking();
+    setThread(null);
+    $("messages").innerHTML = emptyState;
+    renderList();
+    updateSend();
+  }
+  $("newchat").onclick = () => {
+    setDrawer(false);
+    newChat();
+    $("input").focus();
+  };
+
+  const el = (tag, className, text) => Object.assign(document.createElement(tag), { className, textContent: text ?? "" });
+  const escapeAttr = (s) => s.replace(/[&"<>]/g, (c) => `&#${c.charCodeAt(0)};`);
+  // Full-text source page; #c= highlights the cited chunk, ?from= is the conversation to return to
+  const sourceUrl = (s) => `/source/${s.doc_id}?from=${encodeURIComponent(threadId)}#c=${s.start}-${s.end}`;
+
+  function addMessage(role) {
+    $("empty")?.remove();
+    const msg = $("messages").appendChild(el("div", `msg ${role}`));
+    const bubble = msg.appendChild(el("div", "bubble"));
+    $("scroll").scrollTop = $("scroll").scrollHeight;
+    return bubble;
+  }
+
+  function renderAnswer(bubble, { answer, sources = [], unverified = [] }) {
+    const byNumber = Object.fromEntries(sources.map((s) => [s.n, s]));
+    const withCites = answer
+      .replace(/\[(\d+)\]/g, (m, n) => byNumber[n]
+        ? `<sup class="cite"><a href="${sourceUrl(byNumber[n])}" title="${escapeAttr(byNumber[n].source)}">${n}</a></sup>`
+        : m)
+      .replace(/\[\?\]/g, '<sup class="cite bad"><span title="Unverified citation">?</span></sup>');
+    // LLM output is fed by document content; sanitize before inserting as HTML
+    bubble.innerHTML = DOMPurify.sanitize(marked.parse(withCites));
+
+    if (unverified.length) {
+      bubble.append(el("div", "warn",
+        `⚠ Unverified citation (not among the documents retrieved in this conversation): ${unverified.join("; ")}`));
+    }
+    if (!sources.length) return;
+    const box = bubble.appendChild(el("div", "sources"));
+    box.append(el("div", "sources-title", "Sources"));
+    const list = box.appendChild(el("div", "source-list"));
+    for (const s of sources) {
+      const card = list.appendChild(el("a", "source"));
+      card.href = sourceUrl(s); // same tab: "← Assistant" returns to this conversation
+      card.append(el("span", "num", s.n));
+      const body = card.appendChild(el("div"));
+      const { title, ...rest } = s.metadata || {};
+      const meta = Object.values(rest).filter(Boolean).slice(0, 2).join(" · ");
+      body.append(el("div", "source-name", s.source));
+      if (title) body.append(el("div", "source-title", title));
+      if (meta) body.append(el("div", "source-meta", meta));
+      body.append(el("div", "source-snippet", s.text));
+    }
+  }
+
+  function clearThinking() {
+    clearInterval(tickTimer);
+    tickTimer = placeholder = null;
+  }
+  // "Searching" bubble in the open conversation; the timer continues from the recorded start
+  function showThinking(id) {
+    clearThinking();
+    const bubble = addMessage("assistant");
+    bubble.classList.add("thinking");
+    placeholder = bubble;
+    const started = pending.get(id) ?? Date.now();
+    let ticks = 0;
+    const tick = () => (bubble.textContent = `Searching documents… ${Math.round((Date.now() - started) / 1000)} s`);
+    tick();
+    tickTimer = setInterval(() => {
+      tick();
+      // request started in another tab or before a reload: poll the server for the answer
+      if (!pending.has(id) && ++ticks % 3 === 0) checkRemote(id, bubble);
+    }, 1000);
+  }
+  async function checkRemote(id, bubble) {
+    await loadList();
+    if (placeholder !== bubble || threadId !== id || pending.has(id)) return;
+    if (convs && !convs.find((c) => c.id === id)?.pending) openConversation(id);
+  }
+
+  async function ask(id, question) {
+    const asker = user;
+    pending.set(id, Date.now());
+    addMessage("user").textContent = question;
+    showThinking(id);
+    // add to the sidebar right away / move to the top
+    convs ??= [];
+    const prev = convs.find((c) => c.id === id);
+    convs = [{ ...prev, id, title: prev?.title || question.slice(0, 60), pending: true }, ...convs.filter((c) => c.id !== id)];
+    renderList();
+    updateSend();
+
+    let data, error;
+    try {
+      const res = await fetch("/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question, user_id: asker, thread_id: id }),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        let detail = text;
+        try { detail = JSON.parse(text).detail ?? text; } catch {}
+        throw new Error(`${res.status} ${typeof detail === "string" ? detail : JSON.stringify(detail)}`);
+      }
+      data = await res.json();
+    } catch (err) {
+      error = err;
+    }
+
+    pending.delete(id);
+    if (user !== asker) return; // signed out while waiting
+    if (id === threadId && placeholder) {
+      const bubble = placeholder;
+      clearThinking();
+      bubble.className = error ? "bubble error" : "bubble";
+      if (error) bubble.textContent = `Error: ${error.message}`;
+      else renderAnswer(bubble, data);
+      bubble.parentElement.previousElementSibling?.scrollIntoView({ block: "start", behavior: "smooth" });
+    } else if (id === threadId) {
+      openConversation(id); // arrived while the conversation was loading: show the server copy
+    } else {
+      unread.add(id);
+    }
+    updateSend();
+    await loadList();
+  }
+
+  const input = $("input");
+  function updateSend() { $("send").disabled = !input.value.trim() || isPending(threadId); }
+  input.oninput = () => {
+    input.style.height = "auto";
+    input.style.height = `${input.scrollHeight}px`;
+    updateSend();
+  };
+  input.onkeydown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      $("form").requestSubmit();
+    }
+  };
+  $("form").onsubmit = (e) => {
+    e.preventDefault();
+    const question = input.value.trim();
+    if (!question || isPending(threadId)) return;
+    input.value = "";
+    input.oninput();
+    if (!threadId) setThread(crypto.randomUUID());
+    ask(threadId, question);
+  };
+  $("messages").onclick = (e) => {
+    if (!e.target.matches(".examples button") || isPending(threadId)) return;
+    if (!threadId) setThread(crypto.randomUUID());
+    ask(threadId, e.target.textContent);
+  };
+
+  showView();
+</script>
+</body>
+</html>

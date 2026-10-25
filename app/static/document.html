@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Source document</title>
+<link rel="stylesheet" href="/static/common.css">
+<script src="/static/common.js"></script>
+<style>
+  article { max-width: 768px; margin: 0 auto; padding: 24px 16px 48px; }
+  article h2 { margin: 0 0 16px; font-size: 22px; line-height: 1.3; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0 0 16px; font-size: 14px; }
+  dt { color: var(--muted); }
+  dd { margin: 0; }
+  #text { white-space: pre-wrap; line-height: 1.75; }
+  mark { padding: 2px 0; border-radius: 3px; background: var(--mark); color: inherit; }
+  .error { color: var(--error); }
+</style>
+</head>
+<body>
+<header>
+  <a class="btn" id="back" href="/">← Assistant</a>
+  <h1>Source document</h1>
+  <button class="btn" id="theme" type="button" aria-label="Toggle light/dark theme">◐</button>
+</header>
+
+<main>
+  <article>
+    <h2 id="heading">Loading…</h2>
+    <dl id="meta"></dl>
+    <div id="text"></div>
+  </article>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const docId = location.pathname.split("/").pop();
+  // Return to the conversation we came from (the chat page restores its own scroll position)
+  const from = new URLSearchParams(location.search).get("from");
+  if (from) $("back").href = `/?c=${encodeURIComponent(from)}`;
+  // #c=start-end: where the cited chunk sits in the full text
+  const [start, end] = (new URLSearchParams(location.hash.slice(1)).get("c") || "").split("-").map(Number);
+
+  // "doc_type" / "doc-type" -> "Doc type"
+  const label = (key) => { const t = key.replace(/[_-]/g, " "); return t[0].toUpperCase() + t.slice(1); };
+
+  fetch(`/documents/${docId}`)
+    .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`${res.status}`))))
+    .then((doc) => {
+      document.title = doc.source;
+      $("heading").textContent = doc.source;
+      for (const [key, value] of Object.entries(doc.metadata)) {
+        $("meta").append(Object.assign(document.createElement("dt"), { textContent: label(key) }));
+        $("meta").append(Object.assign(document.createElement("dd"), { textContent: value }));
+      }
+
+      const text = $("text");
+      if (end > start) {
+        const mark = document.createElement("mark");
+        mark.textContent = doc.text.slice(start, end);
+        text.append(doc.text.slice(0, start), mark, doc.text.slice(end));
+        mark.scrollIntoView({ block: "center" });
+      } else {
+        text.textContent = doc.text;
+      }
+    })
+    .catch((err) => {
+      $("heading").textContent = "Document not found";
+      $("heading").className = "error";
+      $("text").textContent = `Error: ${err.message}`;
+    });
+</script>
+</body>
+</html>

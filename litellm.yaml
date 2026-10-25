@@ -1,0 +1,26 @@
+# The app only talks to two aliases: "chat" and "embedding".
+# Swap providers here (any LiteLLM provider: openai/, anthropic/, gemini/, ollama/, ...); the code never changes.
+model_list:
+  - model_name: chat
+    litellm_params:
+      model: deepseek/deepseek-flash
+      api_key: os.environ/DEEPSEEK_API_KEY
+    # Fully local alternative (pull it first: ollama pull qwen3:8b):
+    # litellm_params:
+    #   model: ollama_chat/qwen3:8b
+    #   api_base: http://host.docker.internal:11434
+
+  - model_name: embedding
+    litellm_params:
+      model: ollama/qwen3-embedding:0.6b  # ollama pull qwen3-embedding:0.6b
+      api_base: http://host.docker.internal:11434
+    model_info:
+      mode: embedding
+      output_vector_size: 1024  # must match EMBED_DIM
+
+litellm_settings:
+  drop_params: true  # silently drop parameters a provider doesn't support (e.g. `dimensions` for Ollama)
+  num_retries: 2
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
