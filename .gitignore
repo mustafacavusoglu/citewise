@@ -5,4 +5,5 @@ __pycache__/
 app.db
 app.db-*
 qdrant_data/
+.mem0/
 .DS_Store

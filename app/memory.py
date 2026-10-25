@@ -1,6 +1,7 @@
 import os
 
 os.environ.setdefault("MEM0_TELEMETRY", "False")  # mem0 sends usage telemetry by default
+os.environ.setdefault("MEM0_DIR", ".mem0")  # keep its history.db/config.json in the project, not ~/.mem0
 
 from mem0 import AsyncMemory
 from qdrant_client import QdrantClient

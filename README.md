@@ -15,7 +15,8 @@ passage it came from. Citations that don't match a retrieved passage are flagged
   in that conversation; matches become numbered links, anything else is marked `[?]` with a warning.
 - **Source viewer** — each citation opens the full document with the quoted passage highlighted (chunks are exact
   character slices of the original, so highlighting is precise).
-- **Relevance gate** — a cheap yes/no model call stops off-topic questions before search, the agent and memory run.
+- **Relevance gate** — a cheap yes/no model call stops off-topic questions before search, the agent and memory run;
+  it can be swapped for a dedicated decision model such as Jev (see below).
 - **Two memory layers** — per-conversation history with automatic compaction (old turns are summarised in the
   background), plus long-term per-user memory with mem0 that carries across conversations.
 - **Fully async, non-blocking chats** — several conversations generate in parallel; the sidebar shows pending and
@@ -122,6 +123,50 @@ Try: *"How many vacation days do new employees get?"* or *"What should I do if m
 If you change the embedding model, set `EMBED_DIM` to its vector size, set `EMBED_QUERY_PREFIX` (empty for models
 that don't use an instruction prefix), and re-ingest.
 
+## Long-term memory (mem0)
+
+Nothing extra to install or sign up for: citewise runs the open-source `mem0ai` package in-process, not the hosted
+mem0 platform, so there is no mem0 API key.
+
+- It uses the same LiteLLM gateway (`chat` to extract facts, `embedding` to index them) and the same Qdrant server,
+  where it creates a `memories` collection on first start.
+- Its change log (`history.db`) and `config.json` are written to `.mem0/` in the project (`MEM0_DIR` moves them);
+  telemetry is turned off.
+- The chat model must support JSON output (`response_format: json_object`). DeepSeek, OpenAI and Anthropic models
+  through LiteLLM and most Ollama models do.
+- It is told to keep only facts about the user (name, role, preferences, goals), not document content — see
+  `custom_instructions` in `app/memory.py`.
+- Writes run in the background after each answer, so a new memory can take a few seconds to show up in
+  `GET /memories/{user}`.
+
+## Using a dedicated decision model (e.g. Jev)
+
+The relevance gate is one small function, `gate()` in `app/agent.py`. By default it asks the `GATE_MODEL` alias for
+`{"relevant": true|false}` in JSON mode, so any chat model in `litellm.yaml` works; pointing `GATE_MODEL` at a
+cheaper, faster alias is the easy way to cut cost.
+
+Decision models such as [TypeSafe's Jev](https://arize.com/blog/typesafe-jev-llm-judge/) are built for exactly this
+kind of yes/no step: instead of generating text, they return a probability for each answer you define. Their APIs are
+usually not OpenAI-compatible (LiteLLM reaches Jev through a
+[pass-through route](https://docs.litellm.ai/docs/pass_through/typesafe)), so replace the body of `gate()` instead of
+the alias:
+
+```python
+async def gate(state: State) -> dict:
+    recent = [m for m in state["messages"] if m.type in ("human", "ai") and m.content][-5:]
+    transcript = "\n".join(f"{m.type}: {m.content[:300]}" for m in recent)
+    try:
+        scores = await decide(transcript, choices=["relevant", "off-topic"])  # your decision-model client
+        relevant = scores["relevant"] >= 0.5  # tune the threshold on real questions
+    except Exception:
+        log.exception("gate failed; treating the question as relevant")
+        relevant = True
+    return {"relevant": relevant}
+```
+
+Keep the fail-open `except`: the gate saves cost, it is not a security control. Nothing else in the graph changes.
+Independent benchmarks of decision models are mixed, so compare latency and accuracy on your own questions first.
+
 ## Configuration
 
 | Variable | Default | Purpose |
@@ -135,6 +180,7 @@ that don't use an instruction prefix), and re-ingest.
 | `EMBED_QUERY_PREFIX` | Qwen3 instruction | Prepended to search queries only |
 | `LITELLM_URL` / `QDRANT_URL` | `localhost:4000` / `localhost:6333` | Service locations |
 | `DB_PATH` | `app.db` | SQLite file for chat history and checkpoints |
+| `MEM0_DIR` | `.mem0` | mem0's local history database and config file |
 
 Chunk size, top-k and compaction thresholds are constants in `app/config.py`.
 

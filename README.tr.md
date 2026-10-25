@@ -16,7 +16,8 @@ cevaplar al. Getirilen bir pasajla eşleşmeyen atıflar gerçekmiş gibi göste
   eşleşenler numaralı linke dönüşür, eşleşmeyenler `[?]` ve uyarıyla gösterilir.
 - **Kaynak görüntüleyici** — her atıf belgenin tamamını açar ve alıntılanan pasajı vurgular (parçalar orijinal metnin
   birebir karakter dilimleri olduğu için vurgu tam yerine oturur).
-- **İlgi kapısı (gate)** — ucuz bir evet/hayır model çağrısı, konu dışı soruları arama, agent ve hafıza çalışmadan durdurur.
+- **İlgi kapısı (gate)** — ucuz bir evet/hayır model çağrısı, konu dışı soruları arama, agent ve hafıza çalışmadan
+  durdurur; istenirse Jev gibi özel bir karar modeliyle değiştirilebilir (aşağıya bak).
 - **İki katmanlı hafıza** — sohbet geçmişi otomatik sıkıştırılır (eski turlar arka planda özetlenir); mem0 ile
   kullanıcı başına uzun vadeli hafıza sohbetler arasında taşınır.
 - **Tamamen async, birbirini beklemeyen sohbetler** — birden çok sohbet paralel cevaplanır; kenar çubuğu bekleyen ve
@@ -124,6 +125,51 @@ agent kullanıcının dilinde cevap verir.
 Embedding modelini değiştirirsen `EMBED_DIM`'i yeni vektör boyutuna, `EMBED_QUERY_PREFIX`'i de modele göre ayarla
 (talimat öneki kullanmayan modellerde boş bırak) ve belgeleri yeniden yükle.
 
+## Uzun vadeli hafıza (mem0)
+
+Ayrıca kurulacak ya da kayıt olunacak bir şey yok: citewise, barındırılan mem0 platformunu değil açık kaynak `mem0ai`
+paketini uygulamanın içinde çalıştırır; mem0 API anahtarı gerekmez.
+
+- Aynı LiteLLM gateway'ini (bilgi çıkarmak için `chat`, indekslemek için `embedding`) ve aynı Qdrant sunucusunu
+  kullanır; ilk açılışta `memories` koleksiyonunu kendisi oluşturur.
+- Değişiklik kaydı (`history.db`) ve `config.json` proje içindeki `.mem0/` klasörüne yazılır (`MEM0_DIR` ile
+  taşınabilir); telemetri kapalıdır.
+- Sohbet modeli JSON çıktısını (`response_format: json_object`) desteklemelidir. LiteLLM üzerinden DeepSeek, OpenAI,
+  Anthropic modelleri ve çoğu Ollama modeli destekler.
+- Yalnızca kullanıcıya dair bilgileri (ad, rol, tercihler, hedefler) tutması, belge içeriğini tutmaması söylenir —
+  `app/memory.py` içindeki `custom_instructions`'a bak.
+- Kayıtlar her cevaptan sonra arka planda yapılır; yeni bir bilginin `GET /memories/{user}`'da görünmesi birkaç saniye
+  sürebilir.
+
+## Özel bir karar modeli kullanmak (ör. Jev)
+
+İlgi kapısı tek bir küçük fonksiyondur: `app/agent.py` içindeki `gate()`. Varsayılan olarak `GATE_MODEL` takma adına
+JSON modunda `{"relevant": true|false}` sorar; yani `litellm.yaml`'daki her sohbet modeli çalışır. Maliyeti düşürmenin
+kolay yolu `GATE_MODEL`'i daha ucuz ve hızlı bir takma ada yönlendirmektir.
+
+[TypeSafe'in Jev'i](https://arize.com/blog/typesafe-jev-llm-judge/) gibi karar modelleri tam bu tür evet/hayır
+adımları için yapılmıştır: metin üretmek yerine, senin tanımladığın her cevap için bir olasılık döndürürler. API'leri
+genellikle OpenAI uyumlu değildir (LiteLLM Jev'e
+[pass-through yolu](https://docs.litellm.ai/docs/pass_through/typesafe) ile ulaşır); bu yüzden takma adı değil
+`gate()`'in gövdesini değiştir:
+
+```python
+async def gate(state: State) -> dict:
+    recent = [m for m in state["messages"] if m.type in ("human", "ai") and m.content][-5:]
+    transcript = "\n".join(f"{m.type}: {m.content[:300]}" for m in recent)
+    try:
+        scores = await decide(transcript, choices=["relevant", "off-topic"])  # karar modeli istemcin
+        relevant = scores["relevant"] >= 0.5  # eşiği gerçek sorularla ayarla
+    except Exception:
+        log.exception("gate failed; treating the question as relevant")
+        relevant = True
+    return {"relevant": relevant}
+```
+
+Hata durumunda soruyu geçiren `except`'i koru: kapı maliyet içindir, güvenlik önlemi değildir. Grafın geri kalanı
+değişmez. Karar modelleriyle ilgili bağımsız karşılaştırmaların sonuçları karışık; geçmeden önce gecikmeyi ve
+doğruluğu kendi sorularınla ölç.
+
 ## Ayarlar
 
 | Değişken | Varsayılan | Amaç |
@@ -137,6 +183,7 @@ Embedding modelini değiştirirsen `EMBED_DIM`'i yeni vektör boyutuna, `EMBED_Q
 | `EMBED_QUERY_PREFIX` | Qwen3 talimatı | Yalnızca arama sorgularının başına eklenir |
 | `LITELLM_URL` / `QDRANT_URL` | `localhost:4000` / `localhost:6333` | Servis adresleri |
 | `DB_PATH` | `app.db` | Sohbet geçmişi ve checkpoint'ler için SQLite dosyası |
+| `MEM0_DIR` | `.mem0` | mem0'ın yerel geçmiş veritabanı ve ayar dosyası |
 
 Parça boyutu, top-k ve sıkıştırma eşikleri `app/config.py` içinde sabittir.
 
