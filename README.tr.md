@@ -17,7 +17,7 @@ cevaplar al. Getirilen bir pasajla eşleşmeyen atıflar gerçekmiş gibi göste
 - **Kaynak görüntüleyici** — her atıf belgenin tamamını açar ve alıntılanan pasajı vurgular (parçalar orijinal metnin
   birebir karakter dilimleri olduğu için vurgu tam yerine oturur).
 - **İlgi kapısı (gate)** — ucuz bir evet/hayır model çağrısı, konu dışı soruları arama, agent ve hafıza çalışmadan
-  durdurur; istenirse Jev gibi özel bir karar modeliyle değiştirilebilir (aşağıya bak).
+  durdurur; istenirse Jev ya da açık kaynak Clef gibi özel bir karar modeliyle değiştirilebilir (aşağıya bak).
 - **İki katmanlı hafıza** — sohbet geçmişi otomatik sıkıştırılır (eski turlar arka planda özetlenir); mem0 ile
   kullanıcı başına uzun vadeli hafıza sohbetler arasında taşınır.
 - **Tamamen async, birbirini beklemeyen sohbetler** — birden çok sohbet paralel cevaplanır; kenar çubuğu bekleyen ve
@@ -35,6 +35,7 @@ cevaplar al. Getirilen bir pasajla eşleşmeyen atıflar gerçekmiş gibi göste
 | Model gateway | [LiteLLM](https://github.com/BerriAI/litellm) proxy | Tüm modeller için tek OpenAI uyumlu uç; sağlayıcı ayardan değişir |
 | Sohbet modeli (varsayılan) | DeepSeek (`deepseek-flash`) | Düşük maliyetle güçlü tool calling; herhangi bir LiteLLM modeliyle değişir |
 | Embedding (varsayılan) | [Ollama](https://ollama.com) üzerinden [Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B) | Yerelde çalışan küçük, çok dilli model |
+| İlgi kapısı (isteğe bağlı) | [Clef / Clef-flash](https://huggingface.co/Cloudflare/clef-flash) | Açık ağırlıklı (Apache-2.0) karar modelleri, Jev uyumlu API |
 | Uzun vadeli hafıza | [mem0](https://github.com/mem0ai/mem0) | Her kullanıcı hakkındaki kalıcı bilgileri çıkarır ve birleştirir |
 | API | [FastAPI](https://fastapi.tiangolo.com) + [msgspec](https://jcristharif.com/msgspec/) | Async uçlar, hızlı ve katı doğrulama |
 | Sohbet geçmişi | SQLite | Sohbetler ve checkpoint'ler için bakım gerektirmeyen depolama |
@@ -141,7 +142,7 @@ paketini uygulamanın içinde çalıştırır; mem0 API anahtarı gerekmez.
 - Kayıtlar her cevaptan sonra arka planda yapılır; yeni bir bilginin `GET /memories/{user}`'da görünmesi birkaç saniye
   sürebilir.
 
-## Özel bir karar modeli kullanmak (ör. Jev)
+## Özel bir karar modeli kullanmak (Jev, Clef)
 
 İlgi kapısı tek bir küçük fonksiyondur: `app/agent.py` içindeki `gate()`. Varsayılan olarak `GATE_MODEL` takma adına
 JSON modunda `{"relevant": true|false}` sorar; yani `litellm.yaml`'daki her sohbet modeli çalışır. Maliyeti düşürmenin
@@ -169,6 +170,38 @@ async def gate(state: State) -> dict:
 Hata durumunda soruyu geçiren `except`'i koru: kapı maliyet içindir, güvenlik önlemi değildir. Grafın geri kalanı
 değişmez. Karar modelleriyle ilgili bağımsız karşılaştırmaların sonuçları karışık; geçmeden önce gecikmeyi ve
 doğruluğu kendi sorularınla ölç.
+
+### Önerilen açık kaynak seçenek: Cloudflare Clef
+
+[Clef](https://huggingface.co/Cloudflare/clef) (27B) ve [Clef-flash](https://huggingface.co/Cloudflare/clef-flash)
+(9B), Cloudflare'in Apache-2.0 lisanslı, Qwen3.5 üzerine eğitilmiş açık ağırlıklı karar modelleridir. Bir durum ve
+tipli sorular alırlar, tek seferde her seçenek için olasılık döndürürler. API'leri Jev'in `POST /v1/systemone`'ıyla
+uyumludur; yani `gate()` kodu Jev'i de çağırsan, Clef'i kendin de çalıştırsan aynı kalır.
+
+SGLang ile kendin çalıştırabilirsin (model kartındaki komut, NVIDIA GPU gerekir) ya da Cloudflare Workers AI'daki
+barındırılan sürümü kullanabilirsin:
+
+```bash
+docker run --gpus all --shm-size 32g --ipc=host -p 127.0.0.1:30000:30000 \
+  -v ~/.cache/huggingface:/root/.cache/huggingface \
+  lmsysorg/sglang:dev-clef sglang serve --model-path Cloudflare/clef-flash --host 0.0.0.0 --port 30000
+```
+
+İlgi kontrolü tek bir doğru/yanlış (`noul`) sorusudur:
+
+```bash
+curl http://localhost:30000/v1/systemone -H 'Content-Type: application/json' -d '{
+  "model": "Cloudflare/clef-flash",
+  "state": "human: What is the hotel limit for business travel?",
+  "questions": {"relevant": {"type": "noul",
+    "instructions": "Could this be answered from the Northwind Labs employee handbook, or is it a follow-up to such a question?"}}
+}'
+```
+
+`answers` içinden `relevant` için `true` olasılığını oku ve `gate()` içinde eşiğinle karşılaştır.
+Hangi boyut: kapı aslında bir "kapsam dışı mı?" kontrolüdür. Cloudflare'in kendi bildirdiği Decision Index
+ölçümünde CLINC150+OOS'ta Clef 97.4, Clef-flash 66.8 almış. Doğruluk gecikmeden önemliyse Clef ile başla ve ikisini de
+kendi sorularınla ölç.
 
 ## Ayarlar
 

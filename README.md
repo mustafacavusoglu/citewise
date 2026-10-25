@@ -16,7 +16,7 @@ passage it came from. Citations that don't match a retrieved passage are flagged
 - **Source viewer** — each citation opens the full document with the quoted passage highlighted (chunks are exact
   character slices of the original, so highlighting is precise).
 - **Relevance gate** — a cheap yes/no model call stops off-topic questions before search, the agent and memory run;
-  it can be swapped for a dedicated decision model such as Jev (see below).
+  it can be swapped for a dedicated decision model such as Jev or the open-source Clef (see below).
 - **Two memory layers** — per-conversation history with automatic compaction (old turns are summarised in the
   background), plus long-term per-user memory with mem0 that carries across conversations.
 - **Fully async, non-blocking chats** — several conversations generate in parallel; the sidebar shows pending and
@@ -34,6 +34,7 @@ passage it came from. Citations that don't match a retrieved passage are flagged
 | Model gateway | [LiteLLM](https://github.com/BerriAI/litellm) proxy | One OpenAI-compatible endpoint for every model; providers swap in config |
 | Chat model (default) | DeepSeek (`deepseek-flash`) | Strong tool calling at low cost; replace with any LiteLLM model |
 | Embeddings (default) | [Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B) via [Ollama](https://ollama.com) | Small multilingual model that runs locally |
+| Relevance gate (optional) | [Clef / Clef-flash](https://huggingface.co/Cloudflare/clef-flash) | Open-weight (Apache-2.0) decision models, Jev-compatible API |
 | Long-term memory | [mem0](https://github.com/mem0ai/mem0) | Extracts and merges durable facts about each user |
 | API | [FastAPI](https://fastapi.tiangolo.com) + [msgspec](https://jcristharif.com/msgspec/) | Async endpoints, fast strict validation |
 | Chat history | SQLite | Zero-ops storage for conversations and checkpoints |
@@ -139,7 +140,7 @@ mem0 platform, so there is no mem0 API key.
 - Writes run in the background after each answer, so a new memory can take a few seconds to show up in
   `GET /memories/{user}`.
 
-## Using a dedicated decision model (e.g. Jev)
+## Using a dedicated decision model (Jev, Clef)
 
 The relevance gate is one small function, `gate()` in `app/agent.py`. By default it asks the `GATE_MODEL` alias for
 `{"relevant": true|false}` in JSON mode, so any chat model in `litellm.yaml` works; pointing `GATE_MODEL` at a
@@ -166,6 +167,38 @@ async def gate(state: State) -> dict:
 
 Keep the fail-open `except`: the gate saves cost, it is not a security control. Nothing else in the graph changes.
 Independent benchmarks of decision models are mixed, so compare latency and accuracy on your own questions first.
+
+### Recommended open-source option: Cloudflare Clef
+
+[Clef](https://huggingface.co/Cloudflare/clef) (27B) and [Clef-flash](https://huggingface.co/Cloudflare/clef-flash)
+(9B) are open-weight decision models from Cloudflare, Apache-2.0 licensed and post-trained from Qwen3.5. They take a
+state plus typed questions and return a probability for every allowed option in a single forward pass, and their API is
+compatible with Jev's `POST /v1/systemone`, so the same `gate()` code works whether you call Jev or run Clef yourself.
+
+Self-host it with SGLang (command from the model card, needs an NVIDIA GPU) or use the hosted version on
+Cloudflare Workers AI:
+
+```bash
+docker run --gpus all --shm-size 32g --ipc=host -p 127.0.0.1:30000:30000 \
+  -v ~/.cache/huggingface:/root/.cache/huggingface \
+  lmsysorg/sglang:dev-clef sglang serve --model-path Cloudflare/clef-flash --host 0.0.0.0 --port 30000
+```
+
+A relevance check is a single true/false (`noul`) question:
+
+```bash
+curl http://localhost:30000/v1/systemone -H 'Content-Type: application/json' -d '{
+  "model": "Cloudflare/clef-flash",
+  "state": "human: What is the hotel limit for business travel?",
+  "questions": {"relevant": {"type": "noul",
+    "instructions": "Could this be answered from the Northwind Labs employee handbook, or is it a follow-up to such a question?"}}
+}'
+```
+
+Read the probability of `true` for `relevant` from `answers` and compare it with your threshold in `gate()`.
+Which size: the gate is essentially an out-of-scope check, and in Cloudflare's own (self-reported) Decision Index run
+Clef scored 97.4 on CLINC150+OOS versus 66.8 for Clef-flash. Start with Clef if accuracy matters more than latency,
+and measure both on your own questions.
 
 ## Configuration
 
